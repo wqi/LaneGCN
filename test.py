@@ -19,11 +19,13 @@ os.umask(0)
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
+import numpy as np
 import pickle
 import sys
 from importlib import import_module
 
 import torch
+from collections import defaultdict
 from torch.utils.data import DataLoader, Sampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
@@ -76,38 +78,51 @@ def main():
     )
 
     # begin inference
-    preds = {}
-    gts = {}
-    cities = {}
+    metrics = []
     for ii, data in tqdm(enumerate(data_loader)):
         data = dict(data)
+
         with torch.no_grad():
             output = net(data)
-            results = [x[0:1].detach().cpu().numpy() for x in output["reg"]]
+            results = [x[0:1].detach().cpu() for x in output["reg"]]
+
         for i, (argo_idx, pred_traj) in enumerate(zip(data["argo_id"], results)):
-            preds[argo_idx] = pred_traj.squeeze()
-            cities[argo_idx] = data["city"][i]
-            gts[argo_idx] = data["gt_preds"][i][0] if "gt_preds" in data else None
-        # break
+            preds = pred_traj.squeeze()
+            truth = data["gt_preds"][i][0] if "gt_preds" in data else None
+            truth = truth.unsqueeze(0).repeat(preds.shape[0], 1, 1)
 
-    # save for further visualization
-    res = dict(
-        preds = preds,
-        gts = gts,
-        cities = cities,
-    )
-    # torch.save(res,f"{config['save_dir']}/results.pkl")
+            # Compute metrics for all agents and scenarios
+            l2_all = torch.sqrt(torch.sum((preds - truth)**2, dim=-1))
+            ade_all = torch.sum(l2_all, dim=-1) / preds.size(-2)
+            fde_all = l2_all[..., -1]
+            min_fde_idx = torch.argmin(fde_all, dim=-1).unsqueeze(-1)
+            fde = torch.gather(fde_all, -1, min_fde_idx).squeeze(-1)
+            ade = torch.gather(ade_all, -1, min_fde_idx).squeeze(-1)
+            miss = int(fde > 2)
+            metrics.append((argo_idx, (fde, ade, miss)))
 
-    # evaluate or submit
-    if args.split == "val":
-        # for val set: compute metric
-        from argoverse.evaluation.eval_forecasting import (
-            compute_forecasting_metrics,
-        )
-        # Max #guesses (K): 6
-        _ = compute_forecasting_metrics(preds, gts, cities, 6, 30, 2)
-        # Max #guesses (K): 1
-        _ = compute_forecasting_metrics(preds, gts, cities, 1, 30, 2)
+    # Compute per-agent metrics
+    agent_mean_fde = np.mean(np.array([x[1][0] for x in metrics]))
+    agent_mean_ade = np.mean(np.array([x[1][1] for x in metrics]))
+    agent_mr = np.mean(np.array([x[1][2] for x in metrics]))
+
+    print(f'Agent FDE: {agent_mean_fde}')
+    print(f'Agent ADE: {agent_mean_ade}')
+    print(f'Agent MR: {agent_mr}')
+
+    # Compute per-scenario metrics
+    scenario_metrics = defaultdict(list)
+    for entry in metrics:
+        scenario_metrics[entry[0]].append(entry[1])
+
+    wc_fde = np.array([np.max([y[0] for y in x]) for x in scenario_metrics.values()])
+    wc_mean_fde = np.mean(wc_fde)
+    wc_mean_ade = np.mean([np.max([y[1] for y in x]) for x in scenario_metrics.values()])
+    wc_mr = np.sum(wc_fde > 2) / wc_fde.shape[0]
+
+    print(f'Worst-Case Scenario FDE: {wc_mean_fde}')
+    print(f'Worst-Case Scenario ADE: {wc_mean_ade}')
+    print(f'Worst-Case Scenario MR: {wc_mr}')
 
 
 if __name__ == "__main__":

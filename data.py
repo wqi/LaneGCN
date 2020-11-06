@@ -343,7 +343,6 @@ class ArgoTestDataset(ArgoDataset):
     def __getitem__(self, idx):
         if 'preprocess' in self.config and self.config['preprocess']:
             data = self.split[idx]
-            print(data['argo_id'])
 
             new_data = dict()
             for key in ['orig', 'gt_preds', 'has_preds', 'theta', 'rot', 'feats', 'ctrs', 'graph', 'argo_id', 'city']:
