@@ -71,7 +71,7 @@ def main():
         batch_size=config["val_batch_size"],
         num_workers=config["val_workers"],
         collate_fn=collate_fn,
-        shuffle=True,
+        shuffle=False,
         pin_memory=True,
     )
 
@@ -88,6 +88,7 @@ def main():
             preds[argo_idx] = pred_traj.squeeze()
             cities[argo_idx] = data["city"][i]
             gts[argo_idx] = data["gt_preds"][i][0] if "gt_preds" in data else None
+        # break
 
     # save for further visualization
     res = dict(
@@ -96,7 +97,7 @@ def main():
         cities = cities,
     )
     # torch.save(res,f"{config['save_dir']}/results.pkl")
-    
+
     # evaluate or submit
     if args.split == "val":
         # for val set: compute metric
@@ -107,11 +108,6 @@ def main():
         _ = compute_forecasting_metrics(preds, gts, cities, 6, 30, 2)
         # Max #guesses (K): 1
         _ = compute_forecasting_metrics(preds, gts, cities, 1, 30, 2)
-    else:
-        # for test set: save as h5 for submission in evaluation server
-        from argoverse.evaluation.competition_util import generate_forecasting_h5
-        generate_forecasting_h5(preds, f"{config['save_dir']}/submit.h5")  # this might take awhile
-    import ipdb;ipdb.set_trace()
 
 
 if __name__ == "__main__":

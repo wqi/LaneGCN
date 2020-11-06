@@ -40,77 +40,16 @@ def main():
     # Import all settings for experiment.
     args = parser.parse_args()
     model = import_module(args.model)
-    print(args.model)
     config, *_ = model.get_model()
 
     config["preprocess"] = False  # we use raw data to generate preprocess data
-    config["val_workers"] = 32
-    config["workers"] = 32
+    config["val_workers"] = 16
+    config["workers"] = 8
     config['cross_dist'] = 6
     config['cross_angle'] = 0.5 * np.pi
 
-    os.makedirs(os.path.dirname(config['preprocess_train']),exist_ok=True)    
-
-
-
+    os.makedirs(os.path.dirname(config['preprocess_train']), exist_ok=True)
     val(config)
-    test(config)
-    train(config)
-
-
-def train(config):
-    # Data loader for training set
-    dataset = Dataset(config["train_split"], config, train=True)
-    train_loader = DataLoader(
-        dataset,
-        batch_size=config["batch_size"],
-        num_workers=config["workers"],
-        shuffle=False,
-        collate_fn=collate_fn,
-        pin_memory=True,
-        drop_last=False,
-    )
-
-    stores = [None for x in range(205942)]
-    t = time.time()
-    for i, data in enumerate(tqdm(train_loader)):
-        data = dict(data)
-        for j in range(len(data["idx"])):
-            store = dict()
-            for key in [
-                "idx",
-                "city",
-                "feats",
-                "ctrs",
-                "orig",
-                "theta",
-                "rot",
-                "gt_preds",
-                "has_preds",
-                "graph",
-            ]:
-                store[key] = to_numpy(data[key][j])
-                if key in ["graph"]:
-                    store[key] = to_int16(store[key])
-            stores[store["idx"]] = store
-
-        if (i + 1) % 100 == 0:
-            print(i, time.time() - t)
-            t = time.time()
-
-
-
-    dataset = PreprocessDataset(stores, config, train=True)
-    data_loader = DataLoader(
-        dataset,
-        batch_size=config['batch_size'],
-        num_workers=config['workers'],
-        shuffle=False,
-        collate_fn=from_numpy,
-        pin_memory=True,
-        drop_last=False)
-
-    modify(config, data_loader,config["preprocess_train"])
 
 
 def val(config):
@@ -118,13 +57,15 @@ def val(config):
     dataset = Dataset(config["val_split"], config, train=False)
     val_loader = DataLoader(
         dataset,
-        batch_size=config["val_batch_size"],
-        num_workers=config["val_workers"],
+        batch_size=16,
+        num_workers=8,
+        # batch_size=1,
+        # num_workers=1,
         shuffle=False,
         collate_fn=collate_fn,
         pin_memory=True,
     )
-    stores = [None for x in range(39472)]
+    stores = [None for x in range(len(dataset))]
 
     t = time.time()
     for i, data in enumerate(tqdm(val_loader)):
@@ -132,6 +73,7 @@ def val(config):
         for j in range(len(data["idx"])):
             store = dict()
             for key in [
+                'argo_id',
                 "idx",
                 "city",
                 "feats",
@@ -155,63 +97,16 @@ def val(config):
     dataset = PreprocessDataset(stores, config, train=False)
     data_loader = DataLoader(
         dataset,
-        batch_size=config['batch_size'],
-        num_workers=config['workers'],
+        batch_size=16,
+        num_workers=8,
+        # batch_size=1,
+        # num_workers=1,
         shuffle=False,
         collate_fn=from_numpy,
         pin_memory=True,
         drop_last=False)
 
-    modify(config, data_loader,config["preprocess_val"])
-
-
-def test(config):
-    dataset = Dataset(config["test_split"], config, train=False)
-    test_loader = DataLoader(
-        dataset,
-        batch_size=config["val_batch_size"],
-        num_workers=config["val_workers"],
-        shuffle=False,
-        collate_fn=collate_fn,
-        pin_memory=True,
-    )
-    stores = [None for x in range(78143)]
-
-    t = time.time()
-    for i, data in enumerate(tqdm(test_loader)):
-        data = dict(data)
-        for j in range(len(data["idx"])):
-            store = dict()
-            for key in [
-                "idx",
-                "city",
-                "feats",
-                "ctrs",
-                "orig",
-                "theta",
-                "rot",
-                "graph",
-            ]:
-                store[key] = to_numpy(data[key][j])
-                if key in ["graph"]:
-                    store[key] = to_int16(store[key])
-            stores[store["idx"]] = store
-
-        if (i + 1) % 100 == 0:
-            print(i, time.time() - t)
-            t = time.time()
-
-    dataset = PreprocessDataset(stores, config, train=False)
-    data_loader = DataLoader(
-        dataset,
-        batch_size=config['batch_size'],
-        num_workers=config['workers'],
-        shuffle=False,
-        collate_fn=from_numpy,
-        pin_memory=True,
-        drop_last=False)
-
-    modify(config, data_loader,config["preprocess_test"])
+    modify(config, data_loader, config["preprocess_val"])
 
 
 def to_numpy(data):
@@ -238,7 +133,6 @@ def to_int16(data):
     return data
 
 
-
 def modify(config, data_loader, save):
     t = time.time()
     store = data_loader.dataset.split
@@ -262,6 +156,7 @@ def modify(config, data_loader, save):
     pickle.dump(store, f, protocol=pickle.HIGHEST_PROTOCOL)
     f.close()
 
+
 class PreprocessDataset():
     def __init__(self, split, config, train=True):
         self.split = split
@@ -280,8 +175,6 @@ class PreprocessDataset():
 
     def __len__(self):
         return len(self.split)
-
-
 
 
 def preprocess(graph, cross_dist, cross_angle=None):
@@ -392,7 +285,6 @@ def preprocess(graph, cross_dist, cross_angle=None):
     return out
 
 
-
 def to_long(data):
     if isinstance(data, dict):
         for key in data.keys():
@@ -402,13 +294,6 @@ def to_long(data):
     if torch.is_tensor(data) and data.dtype == torch.int16:
         data = data.long()
     return data
-
-
-def worker_init_fn(pid):
-    np_seed = hvd.rank() * 1024 + int(pid)
-    np.random.seed(np_seed)
-    random_seed = np.random.randint(2 ** 32 - 1)
-    random.seed(random_seed)
 
 
 if __name__ == "__main__":
