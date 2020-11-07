@@ -335,7 +335,7 @@ class ArgoTestDataset(ArgoDataset):
 
         if 'preprocess' in config and config['preprocess']:
             self.split = np.load(split, allow_pickle=True)
-            print(len(self.split))
+            print(f'Processed dataset with {len(self.split)} items loaded...')
         else:
             self.avl = ArgoverseForecastingLoader(split)
             self.am = ArgoverseMap()
